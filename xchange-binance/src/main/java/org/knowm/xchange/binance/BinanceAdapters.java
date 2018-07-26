@@ -1,35 +1,39 @@
 package org.knowm.xchange.binance;
 
+import java.math.BigDecimal;
+import java.util.HashSet;
+import java.util.Set;
 import org.knowm.xchange.binance.dto.trade.BinanceOrder;
+import java.util.Arrays;
+
 import org.knowm.xchange.binance.dto.trade.OrderSide;
 import org.knowm.xchange.binance.dto.trade.OrderStatus;
+import org.knowm.xchange.binance.service.BinanceTradeService.BinanceOrderFlags;
 import org.knowm.xchange.currency.Currency;
 import org.knowm.xchange.currency.CurrencyPair;
 import org.knowm.xchange.dto.Order;
+import org.knowm.xchange.dto.Order.IOrderFlags;
 import org.knowm.xchange.dto.Order.OrderType;
 import org.knowm.xchange.dto.trade.LimitOrder;
 import org.knowm.xchange.dto.trade.MarketOrder;
 import org.knowm.xchange.dto.trade.StopOrder;
 
-import java.math.BigDecimal;
-
 public class BinanceAdapters {
 
-  private BinanceAdapters() {
-  }
+  private BinanceAdapters() {}
 
   public static String toSymbol(CurrencyPair pair) {
-	  if (pair.equals(CurrencyPair.IOTA_BTC)) {
-		  return "IOTABTC";
-	  }
+    if (pair.equals(CurrencyPair.IOTA_BTC)) {
+      return "IOTABTC";
+    }
     return pair.base.getCurrencyCode() + pair.counter.getCurrencyCode();
   }
 
   public static String toSymbol(Currency currency) {
-	  if (Currency.IOT.equals(currency)) {
-		  return "IOTA";
-	  }
-	  return currency.getSymbol();
+    if (Currency.IOT.equals(currency)) {
+      return "IOTA";
+    }
+    return currency.getSymbol();
   }
 
   public static OrderType convert(OrderSide side) {
@@ -53,6 +57,17 @@ public class BinanceAdapters {
         throw new RuntimeException("Not supported order type: " + type);
     }
   }
+  
+  public static CurrencyPair convert(String symbol) {
+    // Iterate by base currency priority at binance. 
+    for (Currency base: Arrays.asList(Currency.BTC, Currency.ETH, Currency.BNB, Currency.USDT)) {
+    	  if (symbol.contains(base.toString())) {
+    	    String counter = symbol.replace(base.toString(), "");
+    	    return new CurrencyPair(base, new Currency(counter));
+    	  }
+    }
+    	throw new IllegalArgumentException("Could not parse currency pair from '" + symbol + "'");
+  }
 
   public static long id(String id) {
     try {
@@ -62,8 +77,8 @@ public class BinanceAdapters {
     }
   }
 
-  public static Order.OrderStatus adaptOrderStatus(OrderStatus orderStatus){
-    switch (orderStatus){
+  public static Order.OrderStatus adaptOrderStatus(OrderStatus orderStatus) {
+    switch (orderStatus) {
       case NEW:
         return Order.OrderStatus.NEW;
       case FILLED:
@@ -87,12 +102,13 @@ public class BinanceAdapters {
     return isBuyer ? OrderType.BID : OrderType.ASK;
   }
 
-  public static CurrencyPair adaptSymbol(String symbol){
+  public static CurrencyPair adaptSymbol(String symbol) {
     int pairLength = symbol.length();
     if (symbol.endsWith("USDT")) {
       return new CurrencyPair(symbol.substring(0, pairLength - 4), "USDT");
     } else {
-      return new CurrencyPair(symbol.substring(0, pairLength - 3), symbol.substring(pairLength - 3));
+      return new CurrencyPair(
+          symbol.substring(0, pairLength - 3), symbol.substring(pairLength - 3));
     }
   }
 
@@ -102,14 +118,17 @@ public class BinanceAdapters {
 
     Order.OrderStatus orderStatus = adaptOrderStatus(order.status);
     final BigDecimal averagePrice;
-    if (order.executedQty.signum() == 0 || order.type.equals(org.knowm.xchange.binance.dto.trade.OrderType.MARKET)) {
+    if (order.executedQty.signum() == 0
+        || order.type.equals(org.knowm.xchange.binance.dto.trade.OrderType.MARKET)) {
       averagePrice = BigDecimal.ZERO;
     } else {
       averagePrice = order.price;
     }
 
+    Order result;
     if (order.type.equals(org.knowm.xchange.binance.dto.trade.OrderType.MARKET)) {
-      return new MarketOrder(
+      result =
+          new MarketOrder(
               type,
               order.origQty,
               currencyPair,
@@ -118,31 +137,44 @@ public class BinanceAdapters {
               averagePrice,
               order.executedQty,
               BigDecimal.ZERO,
-              orderStatus
-      );
+              orderStatus);
     } else if (order.type.equals(org.knowm.xchange.binance.dto.trade.OrderType.LIMIT)) {
-        return new LimitOrder(
-                type,
-                order.origQty,
-                currencyPair,
-                Long.toString(order.orderId),
-                order.getTime(),
-                order.price,
-                averagePrice,
-                order.executedQty,
-                BigDecimal.ZERO,
-                orderStatus);
-      } else {
-        return new StopOrder(
-                type,
-                order.origQty,
-                currencyPair,
-                Long.toString(order.orderId),
-                order.getTime(),
-                order.stopPrice,
-                averagePrice,
-                order.executedQty,
-                orderStatus);
-      }
+      result =
+          new LimitOrder(
+              type,
+              order.origQty,
+              currencyPair,
+              Long.toString(order.orderId),
+              order.getTime(),
+              order.price,
+              averagePrice,
+              order.executedQty,
+              BigDecimal.ZERO,
+              orderStatus);
+    } else {
+      result =
+          new StopOrder(
+              type,
+              order.origQty,
+              currencyPair,
+              Long.toString(order.orderId),
+              order.getTime(),
+              order.stopPrice,
+              averagePrice,
+              order.executedQty,
+              orderStatus);
+    }
+    Set<IOrderFlags> flags = new HashSet<>();
+    if (order.clientOrderId != null) {
+      flags.add(
+          new BinanceOrderFlags() {
+            @Override
+            public String getClientId() {
+              return order.clientOrderId;
+            }
+          });
+    }
+    result.setOrderFlags(flags);
+    return result;
   }
 }
